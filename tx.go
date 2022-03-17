@@ -83,7 +83,7 @@ func (tx *Tx) Publish(_ context.Context, exchange, key string, mandatory, immedi
 }
 
 // InTx runs the given function f within a transaction.
-func InTx(ctx context.Context, c *Client, f func(tx *Tx) error) error {
+func InTx(ctx context.Context, c Channeler, f func(tx *Tx) error) error {
 	tx, err := BeginTx(ctx, c)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
