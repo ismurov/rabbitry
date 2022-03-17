@@ -5,6 +5,7 @@ all: help
 ## lint: Run linters.
 lint:
 	@echo '>>> Run linters.'
+	@go install -modfile=go_test.mod github.com/golangci/golangci-lint/cmd/golangci-lint
 	@golangci-lint version --format=short | awk '{printf "golangci-lint: %s\n", $$0}'
 
 	@echo 'lint module: rabbitry'
