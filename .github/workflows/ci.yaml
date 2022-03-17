@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches:
+    - main
+    - dev
+  pull_request:
+    branches:
+    - main
+    - dev
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.7.0
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '1.17'
+
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-test-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-test-
+            ${{ runner.os }}-go-
+
+      - name: go-test
+        shell: bash
+        run: |-
+          set -eEu
+          set +o pipefail
+          make test-acc
+
+      - name: go-coverage
+        shell: bash
+        run: |-
+          OUTPUT="$(make test-coverage)"
+          TOTAL="$(echo $OUTPUT | awk 'END{print $NF}')"
+          echo "::group::Coverage (${TOTAL})"
+          echo "${OUTPUT}"
+          echo "::endgroup::"
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.7.0
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '1.17'
+
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-lint-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-lint-
+            ${{ runner.os }}-go-
+
+      - name: go-lint
+        shell: bash
+        run: |-
+          set -eEu
+          set +o pipefail
+          make lint
+
