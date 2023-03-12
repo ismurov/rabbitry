@@ -863,7 +863,7 @@ func TestE2E_Consumer_StartDelivering_HandlerPanic(t *testing.T) {
 
 	// Create client.
 	c, err := rabbitry.New(ctx, connectionURL(t), &rabbitry.Config{
-		Logger: logging.TestLogger(t, true, 0),
+		Logger: rabbitry.TestLogger(t, true, 0),
 	})
 	if err != nil {
 		t.Fatalf("rabbitry.New: %s", err)
@@ -900,7 +900,7 @@ func TestE2E_Consumer_StartDelivering_HandlerPanic(t *testing.T) {
 	}
 
 	// Create consumer.
-	consumer := rabbitry.NewConsumer(c, logging.TestLogger(t, false, 0))
+	consumer := rabbitry.NewConsumer(c, rabbitry.TestLogger(t, false, 0))
 
 	cCtx, cCtxCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cCtxCancel()
@@ -954,7 +954,7 @@ func TestE2E_Consumer_NackWithoutRequeueOnPanic(t *testing.T) {
 
 	// Create client.
 	c, err := rabbitry.New(ctx, connectionURL(t), &rabbitry.Config{
-		Logger: logging.TestLogger(t, true, 0),
+		Logger: rabbitry.TestLogger(t, true, 0),
 	})
 	if err != nil {
 		t.Fatalf("rabbitry.New: %s", err)
@@ -976,7 +976,7 @@ func TestE2E_Consumer_NackWithoutRequeueOnPanic(t *testing.T) {
 	// Create consumer.
 	consumer := rabbitry.NewConsumer(
 		c,
-		logging.TestLogger(t, false, 0),
+		rabbitry.TestLogger(t, false, 0),
 		rabbitry.ConsumerWithRequeueOnPanic(false), // <– Disable delivery requeue on panic.
 	)
 
