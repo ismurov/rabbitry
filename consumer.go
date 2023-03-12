@@ -9,23 +9,47 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// ConsumerOption is an optional modifier to create a consumer.
+type ConsumerOption func(*Consumer)
+
+// ConsumerWithRequeueOnPanic defines behaver of consumer panic recovery flow.
+// The message that caused the panic will be marked as NACK or NACK + REQUEUE.
+//
+// Default: true.
+func ConsumerWithRequeueOnPanic(requeue bool) ConsumerOption {
+	return func(c *Consumer) {
+		c.requeueOnPanic = requeue
+	}
+}
+
 // Consumer is generic helper for creating and serving exchange/queue consumer
 // and consume delivering messages. It supports automatic Client reconnection.
 type Consumer struct {
 	logger Logger
 	c      Channeler
+
+	// NACK or NACK + REQUEUE in consumer panic recovery flow.
+	requeueOnPanic bool
 }
 
 // NewConsumer creates new instance of Consumer. If logger passed in is nil,
 // it will use NopLogger.
-func NewConsumer(c Channeler, logger Logger) *Consumer {
+func NewConsumer(c Channeler, logger Logger, opts ...ConsumerOption) *Consumer {
 	if logger == nil {
 		logger = NopLogger
 	}
-	return &Consumer{
-		logger: logger,
-		c:      c,
+
+	cm := &Consumer{
+		logger:         logger,
+		c:              c,
+		requeueOnPanic: true,
 	}
+
+	for _, opt := range opts {
+		opt(cm)
+	}
+
+	return cm
 }
 
 // StartDeliveringFunc is a function to open and configure delivery channel.
@@ -105,7 +129,17 @@ func (c *Consumer) panicSafeCallback(cb func(*amqp.Delivery)) func(*amqp.Deliver
 				const size = 64 << 10 // 64 KiB.
 				buf := make([]byte, size)
 				buf = buf[:runtime.Stack(buf, false)]
-				c.logger(logf("panic in consumer callback: %v\n%s", err, buf))
+
+				c.logger(logf(
+					"panic in consumer callback; delivery will nacked (requeue: %t): %v\n%s",
+					c.requeueOnPanic, err, buf,
+				))
+
+				if err := d.Nack(false, c.requeueOnPanic); err != nil {
+					c.logger(logf(
+						"failed to NACK delivery after panic recovery in consumer callback: %v", err,
+					))
+				}
 			}
 		}()
 

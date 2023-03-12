@@ -851,3 +851,168 @@ func TestE2E_Consumer_StartDelivering_ErrClosed(t *testing.T) {
 		t.Errorf("after consumer work  a queue is not empty (messages: %d)", q.Messages)
 	}
 }
+
+// TestE2E_Consumer_StartDelivering_HandlerPanic is a test for emulation
+// consumer recovery after hendler panic. Messages will process several times,
+// causing panic during the first five treatments for each message.
+func TestE2E_Consumer_StartDelivering_HandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
+
+	// Create client.
+	c, err := rabbitry.New(ctx, connectionURL(t), &rabbitry.Config{
+		Logger: logging.TestLogger(t, true, 0),
+	})
+	if err != nil {
+		t.Fatalf("rabbitry.New: %s", err)
+	}
+	defer func() {
+		if err = c.Close(); err != nil {
+			t.Errorf("(*rabbitry.Client).Close(): %s", err)
+		}
+	}()
+
+	messages := []amqp.Publishing{
+		{
+			MessageId:   "1",
+			ContentType: "text/plain",
+			Body:        []byte("content on message 1"),
+		},
+		{
+			MessageId:   "2",
+			ContentType: "text/plain",
+			Body:        []byte("content on message 2"),
+		},
+		{
+			MessageId:   "3",
+			ContentType: "text/plain",
+			Body:        []byte("content on message 3"),
+		},
+	}
+
+	queue, ch := declareTestQueue(ctx, t, c)
+	for i, msg := range messages {
+		if err := ch.Publish("", queue, false, false, msg); err != nil {
+			t.Fatalf("(*amqp.Channel).Publish(): message #%d: %s", i+1, err)
+		}
+	}
+
+	// Create consumer.
+	consumer := rabbitry.NewConsumer(c, logging.TestLogger(t, false, 0))
+
+	cCtx, cCtxCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cCtxCancel()
+
+	panicMaxLimit := 5
+	panicCounts := make(map[string]int, len(messages))
+
+	var processed int
+	if cErr := consumer.StartLoop(cCtx,
+		func(c *amqp.Channel) (<-chan amqp.Delivery, error) {
+			return c.Consume(queue, "", false, false, false, false, nil)
+		},
+		func(d *amqp.Delivery) {
+			if panicCounts[d.MessageId] < panicMaxLimit {
+				panicCounts[d.MessageId]++
+				panic("test handler panic for message " + d.MessageId) // <– Panic here!
+			}
+
+			if err := d.Ack(false); err != nil {
+				t.Errorf("failed to acknowledge delivery: %v", err)
+			}
+
+			processed++
+
+			if processed >= len(messages) {
+				// Stop the consumer's work if the entire delivery is consumed.
+				cCtxCancel()
+			}
+		},
+	); cErr != nil {
+		t.Errorf("(*rabbitry.Consumer).StartLoop(): %v", cErr)
+	}
+
+	q, err := ch.QueueInspect(queue)
+	if err != nil {
+		t.Fatalf("queue inspect: %v", err)
+	}
+	if q.Messages != 0 {
+		t.Errorf("after consumer work a queue is not empty (messages: %d)", q.Messages)
+	}
+}
+
+// TestE2E_Consumer_NackWithoutRequeueOnPanic is a test for emulation
+// consumer recovery after hendler panic. In this test case delivery
+// will be NACK without requeue.
+func TestE2E_Consumer_NackWithoutRequeueOnPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
+
+	// Create client.
+	c, err := rabbitry.New(ctx, connectionURL(t), &rabbitry.Config{
+		Logger: logging.TestLogger(t, true, 0),
+	})
+	if err != nil {
+		t.Fatalf("rabbitry.New: %s", err)
+	}
+	defer func() {
+		if err = c.Close(); err != nil {
+			t.Errorf("(*rabbitry.Client).Close(): %s", err)
+		}
+	}()
+
+	queue, ch := declareTestQueue(ctx, t, c)
+	if err := ch.Publish("", queue, false, false, amqp.Publishing{
+		ContentType: "text/plain",
+		Body:        []byte("content on message"),
+	}); err != nil {
+		t.Fatalf("(*amqp.Channel).Publish(): %s", err)
+	}
+
+	// Create consumer.
+	consumer := rabbitry.NewConsumer(
+		c,
+		logging.TestLogger(t, false, 0),
+		rabbitry.ConsumerWithRequeueOnPanic(false), // <– Disable delivery requeue on panic.
+	)
+
+	cCtx, cCtxCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cCtxCancel()
+
+	var calls int
+	if cErr := consumer.StartLoop(cCtx,
+		func(c *amqp.Channel) (<-chan amqp.Delivery, error) {
+			return c.Consume(queue, "", false, false, false, false, nil)
+		},
+		func(d *amqp.Delivery) {
+			calls++
+
+			if calls == 1 {
+				// Terminate consumer, no messages are expected.
+				time.AfterFunc(500*time.Millisecond, cCtxCancel)
+
+				panic("test handler panic for message") // <– Panic here!
+			}
+
+			t.Errorf("unexpected callback call after panic (call: %d)", calls)
+
+			if err := d.Ack(false); err != nil {
+				t.Errorf("failed to acknowledge unexpected delivery: %v", err)
+			}
+		},
+	); cErr != nil {
+		t.Errorf("(*rabbitry.Consumer).StartLoop(): %v", cErr)
+	}
+
+	q, err := ch.QueueInspect(queue)
+	if err != nil {
+		t.Fatalf("queue inspect: %v", err)
+	}
+	if q.Messages != 0 {
+		t.Errorf("after consumer work a queue is not empty (messages: %d)", q.Messages)
+	}
+}
